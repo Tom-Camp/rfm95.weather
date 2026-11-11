@@ -48,9 +48,9 @@ With alarm.exit_and_deep_sleep_until_alarms(pin_alarm), one reed pulse = one ful
 Rain is cumulative, so the usual pattern is: wake on the first rain pulse, then stay awake and count subsequent tips with regular interrupts/polling for a hold-off window (say, 20–60 minutes after the last tip), accumulating the count in alarm.sleep_memory or a file, then deep sleep again. Wind is the opposite - it's inherently a rate measurement, so you generally want to sample it on a fixed schedule (TimeAlarm) rather than wake on every rotation. A typical loop:
 
 ```python
-import alarm, time, microcontroller
+import alarm, board, time, microcontroller
 
-RAIN_PIN = board.GP6
+RAIN_PIN = board.D6  # GP6
 WAKE_TIMEOUT = 30 * 60  # stay awake 30 min after last rain event
 
 # Persisted across sleeps
@@ -64,7 +64,7 @@ if alarm.wake_alarm and isinstance(alarm.wake_alarm, alarm.pin.PinAlarm):
     ...
     if time.monotonic() - last_rain > WAKE_TIMEOUT:
         alarm.sleep_memory[0:4] = tips_total.to_bytes(4, "big")
-        rain_alarm = alarm.pin.PinAlarm(pin=RAIN_PIN, value=False, edge=True, pull=True)
+        rain_alarm = alarm.pin.PinAlarm(pin=RAIN_PIN, value=False, edge=True, pull=False)  # external 10 kΩ pull-up
         alarm.exit_and_deep_sleep_until_alarms(rain_alarm)
 else:
     # Power-on: initialize, maybe do a scheduled wind sample via TimeAlarm
@@ -88,7 +88,7 @@ That kit's a good fit for the Feather RP2040 - all three sensors are passive, so
 
 - **Rain gauge** - self-emptying tipping bucket; one momentary reed closure per 0.011″ (0.2794 mm) of rain. This is your natural deep-sleep wake source: `PinAlarm(value=False, edge=True, pull=True)`, each wake adds 0.2794 mm to a counter you keep in `alarm.sleep_memory`.
 - **Anemometer** - one closure per rotation, calibrated so 1.492 mph produces exactly one closure per second. As predicted, you can't count these asleep, so sample it on a schedule: wake via TimeAlarm, count closures for e.g. a 3–5 second window, convert with `mph = frequency × 1.492`, go back to sleep. Pulses between samples are lost - that's the fundamental tradeoff.
-- **Wind vane** - a resistor ladder producing a voltage per direction (16 positions in theory, 8 cardinal directions reliable, since the magnet can close two adjacent switches at once). This one needs an **ADC pin** on the Feather (GP26–GP29), and since it's a passive divider you can power it from a spare GPIO set HIGH only while measuring - no standby drain.
+- **Wind vane** - a resistor ladder producing a voltage per direction (16 positions in theory, 8 cardinal directions reliable, since the magnet can close two adjacent switches at once). This one needs an **ADC pin** on the Feather (A0–A3 = GP26–GP29), and since it's a passive divider you can power it from a spare GPIO set HIGH only while measuring - no standby drain.
 
 **A concrete architecture**
 
@@ -107,13 +107,17 @@ if alarm.wake_alarm and isinstance(alarm.wake_alarm, alarm.pin.PinAlarm):
     # ...stay awake with debounced interrupt counting until quiet period...
 elif isinstance(getattr(alarm, "wake_alarm", None), alarm.time.TimeAlarm):
     # Scheduled wind sample
-    anemo = digitalio.DigitalInOut(board.GP7)
+    anemo_pwr = digitalio.DigitalInOut(board.D9)   # powers the anemometer's 10 kΩ pull-up
+    anemo_pwr.direction = digitalio.Direction.OUTPUT
+    anemo_pwr.value = True
+    anemo = digitalio.DigitalInOut(board.D5)        # GP5 (GP7 is the BOOT button on this board)
     anemo.direction = digitalio.Direction.INPUT
-    anemo.pull = digitalio.Pull.UP
-    vane_pwr = digitalio.DigitalInOut(board.GP10)
+    anemo.pull = None                               # external pull-up via D9
+    vane_pwr = digitalio.DigitalInOut(board.D10)    # GP10
     vane_pwr.direction = digitalio.Direction.OUTPUT
     vane_pwr.value = True
-    adc = analogio.AnalogIn(board.GP26)
+    adc = analogio.AnalogIn(board.A0)               # GP26
+    time.sleep(0.01)                                # let the RC caps settle
 
     start = time.monotonic(); pulses = 0; last = None
     while time.monotonic() - start < 3.0:   # 3-second sample window
@@ -125,8 +129,9 @@ elif isinstance(getattr(alarm, "wake_alarm", None), alarm.time.TimeAlarm):
     direction = adc.value                    # compare against vane table
 
     vane_pwr.value = False
+    anemo_pwr.value = False
     # log mph/direction, then sleep until next sample OR rain pulse
-    rain_alarm = alarm.pin.PinAlarm(pin=board.GP6, value=False, edge=True, pull=True)
+    rain_alarm = alarm.pin.PinAlarm(pin=board.D6, value=False, edge=True, pull=False)
     timer = alarm.time.TimeAlarm(monotonic_time=time.monotonic() + 60)
     alarm.exit_and_deep_sleep_until_alarms(rain_alarm, timer)
 ```
@@ -136,7 +141,7 @@ elif isinstance(getattr(alarm, "wake_alarm", None), alarm.time.TimeAlarm):
 **Two design choices to think through:**
 
 - **Wake-on-rain vs. pure scheduling**: an alternative to pin-alarm wake is dropping the rain pin alarm entirely and letting the TimeAlarm cycle (every minute) poll the bucket. Since RP2040 dormant sleep burns nearly full-power anyway, the pin alarm buys you less than on other chips - it mainly gets you *instant* rain response instead of up-to-60-second latency, at the cost of a boot per tip in a heavy storm. Which behavior you want depends on your logging cadence.
-- **Vane direction lookup**: you'll need to capture the actual ADC values for each of the 16 vane resistance combinations - the SparkFun guide publishes the resistor values so you can compute the expected divider voltages, but empirically calibrating (log raw `adc.value` while rotating the vane through each detent) is more reliable than trusting the math, since tolerances matter at 16-bit resolution.
+- **Vane direction lookup**: you'll need to capture the actual ADC values for each of the 16 vane resistance combinations - the SparkFun guide publishes the resistor values so you can compute the expected divider voltages, but empirically calibrating (log raw `adc.value` while rotating the vane through each detent) is more reliable than trusting the math, since tolerances matter (the RP2040 ADC is 12-bit; CircuitPython scales readings to 16-bit).
 
 If you tell me your logging target (SD card, LoRa/WiFi upload?) and power source, I can tighten up the duty cycle - the big open question is how often you're willing to wake for wind, since that dominates the power budget.
 
@@ -149,17 +154,47 @@ Got the pinouts confirmed from the [SparkFun hookup guide](https://learn.sparkfu
 
 Here's the full wiring diagram - I've sketched it out in the canvas so you can zoom in on the connections. Key points:
 
-- **Rain gauge -> GP6** (center pair of its RJ11), configured as `PinAlarm(value=False, edge=True, pull=True)` to wake the Feather from deep sleep on each bucket tip
-- **Anemometer -> GP7** (shared via the vane's RJ11 cable, since SparkFun chains the anemometer through the vane), read with a pull-up during timed sample windows - 1 pulse/sec = 1.492 mph
-- **Wind vane -> GP26/A0** through a **10 kΩ series resistor** forming a divider powered by **GP10**, a GPIO you switch HIGH only while actually reading the ADC so the divider draws nothing while asleep
+- **Rain gauge -> D6 (GP6)** (center pair of its RJ11), configured as `PinAlarm(value=False, edge=True, pull=True)` to wake the Feather from deep sleep on each bucket tip
+- **Anemometer -> D5 (GP5)** *(originally GP7; see update below)* (shared via the vane's RJ11 cable, since SparkFun chains the anemometer through the vane), read with a pull-up during timed sample windows - 1 pulse/sec = 1.492 mph
+- **Wind vane -> A0 (GP26)** through a **10 kΩ series resistor** forming a divider powered by **D10 (GP10)**, a GPIO you switch HIGH only while actually reading the ADC so the divider draws nothing while asleep
 - **Common GND** across all three sensors and the Feather
 
 One caution I'd flag before you crimp anything: the supplied cable colors can vary, so verify each pair with a multimeter - the anemometer/rain pairs will beep when you manually trip the reed switches, while the vane pair will show varying resistance as you rotate it through its detents. The SparkFun hookup guide's hardware overview page has the official RJ11 pin tables if you want to cross-check my layout against their drawings.
 
 Want me to annotate the diagram with the debounce components (the 0.1 µF caps and optional external pull-ups), or add the RJ11 jack breakout wiring detail showing which jack pins map to which conductors?
 
-The diagram now has a full input-conditioning section. Each reed channel (rain -> GP6 and anemometer -> GP7) gets an identical RC network: a 10 kΩ external pull-up to 3V3 and a 0.1 µF cap from the node to ground, giving τ ≈ 1 ms - enough to swallow reed bounce without smearing genuine pulses.
+The diagram now has a full input-conditioning section. Each reed channel (rain -> D6 and anemometer -> D5) gets an identical RC network: a 10 kΩ external pull-up to 3V3 and a 0.1 µF cap from the node to ground, giving τ ≈ 1 ms - enough to swallow reed bounce without smearing genuine pulses.
 
 One detail worth flagging: with the external pull-up in place, you'd set `pull=False` in the PinAlarm (the external resistor defines the idle state). Or you can keep the internal pull-up and skip the external resistor - both work, the external one is just better-defined.
 
 The notes also cover the tuning range (shrink to 0.047 µF if you miss fast rotations, grow to 0.47 µF if rain still double-counts) and the optional 74HC14 Schmitt-trigger buffer for the rain line if you want a guaranteed clean edge on every counted tip. Anything else you'd like added - the RJ11 jack pin mapping, or a parts list?
+
+## Update (2026-11-11): wiring corrections for the Feather RP2040 RFM95
+
+The original diagram assumed the plain Feather RP2040. Checking CircuitPython's
+pin map for `adafruit_feather_rp2040_rfm` turned up these changes (the README
+wiring section is the current source of truth):
+
+- **GP7 is the onboard BOOT/user button** on the RFM95 Feather and isn't
+  broken out to the header. **The anemometer moved to D5 (GP5).**
+- **Use silkscreen names in code:** `board.D6`, `board.D5`, `board.D9`,
+  `board.D10`, `board.A0`. This board's `board` module has no `GPx` names.
+  The radio uses GP8 and GP14–GP23, so none of these pins conflict with it.
+- **Each reed switch has its own 10 kΩ pull-up to its node.** It is not in
+  series with the sensor. One sensor wire goes to the node, the other to GND,
+  and a 0.1 µF cap runs from the node to GND.
+- **Rain pull-up stays on 3V3**, because it has to be live during sleep to
+  wake the chip. Use `pull=False` in the PinAlarm, since the external resistor
+  does the pull-up.
+- **Anemometer pull-up is powered from D9**, driven HIGH only during the
+  sample window. If the cups stop with the reed closed, a pull-up from 3V3
+  would draw 0.33 mA for the whole sleep.
+- The RC network mostly filters the *release* edge: the closing reed
+  discharges the cap instantly. Adding ~1 kΩ between the reed and the cap
+  filters both edges and is gentler on the contacts (optional).
+- Keep 0.47 µF for the rain line only. The anemometer reaches ~67 Hz at
+  100 mph, so a large τ would merge its pulses.
+- An external 74HC14 is mostly redundant, because RP2040 input pads have
+  Schmitt-trigger inputs enabled by default.
+- Optional: ~1 kΩ in series at each GPIO for static protection on long
+  outdoor runs.
