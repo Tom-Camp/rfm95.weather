@@ -1,4 +1,4 @@
-# rfm95.weather
+# 🌨️️ 🌩️ rfm95.weather 🌧️ ⛅
 
 A battery-powered weather station for the `yard.net` sensor network. It uses an
 [Adafruit Feather RP2040 RFM95](https://www.adafruit.com/product/5714) running
@@ -10,7 +10,7 @@ CircuitPython, connected to a
 > [`notes.md`](notes.md) and [`wiring-diagram.pdf`](wiring-diagram.pdf)), but the
 > firmware isn't written yet. `main.py` is still a placeholder.
 
-## How it works
+## 🛠️ How it works
 
 All three sensors are passive, so they draw no power while the Feather sleeps.
 The station uses CircuitPython deep sleep
@@ -22,14 +22,14 @@ The station uses CircuitPython deep sleep
 | Anemometer | Reed switch, one closure per rotation     | **TimeAlarm**: wake on a schedule and count pulses for a 3–5 s window                | 1 closure/s = 1.492 mph        |
 | Wind vane  | Resistor ladder (16 positions, 8 reliable) | Read with the ADC during the same timed wake; only power the divider while reading | Lookup table of ADC values     |
 
-### Rain
+### 💧 Rain
 
 Each bucket tip pulls GP6 low and wakes the chip. Pulses that arrive while the
 chip is booting can't be counted, so after a rain wake the firmware stays awake
 and counts tips with debounced polling or interrupts. It goes back to sleep after
 a quiet period of about 20–60 minutes with no tips.
 
-### Wind
+### 🌬️ Wind
 
 The anemometer can't be counted while the chip sleeps, because every rotation
 would trigger a full reboot. Instead the chip wakes on a timer, counts closures
@@ -66,7 +66,7 @@ The anemometer cable plugs into the wind vane. The vane's RJ11 cable carries
 both the vane's resistor pair and the anemometer's switch pair down to the
 electronics.
 
-### Wind vane divider
+### 🧭 Wind vane divider
 
 ```
 GP10 ── 10 kΩ ──┬── GP26 (ADC)
