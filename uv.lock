@@ -9,12 +9,25 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/96/e2/c4bd5227207c6f5a05512cb2c5521fed9148cd12d1d59b20043a50a62224/circuitpy-0.0.2.tar.gz", hash = "sha256:73c6898eaa5f2a22d4ee9995bc82f1c826216021d5f69a440fdd1fce5d64f989", size = 1853, upload-time = "2019-12-01T20:22:53.498Z" }
 
 [[package]]
+name = "circuitpython-stubs"
+version = "10.3.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/dd/25/a5377547225fcbfcd244464243c02f1d48cb27dfc57373fb0b18deedaa41/circuitpython_stubs-10.3.2.tar.gz", hash = "sha256:4d3e89330df8cc0af52b09757dcbd56206cd0e3ba9b547ae53b6bf8dc08434f0", size = 414398, upload-time = "2026-11-11T19:36:42.816Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f0/18/ce68d8a4f510123671c5ecda94a7173fb9c46102d862a0fc2828aa748438/circuitpython_stubs-10.3.2-py3-none-any.whl", hash = "sha256:2c00a87b2356da16d6b2e3b03dcf4fab37b60f39f025f2074b134b17e9f7578e", size = 1147040, upload-time = "2026-11-11T19:36:41.259Z" },
+]
+
+[[package]]
 name = "rfm95-weather"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "circuitpy" },
+    { name = "circuitpython-stubs" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "circuitpy", specifier = ">=0.0.2" }]
+requires-dist = [
+    { name = "circuitpy", specifier = ">=0.0.2" },
+    { name = "circuitpython-stubs", specifier = ">=10.3.2" },
+]

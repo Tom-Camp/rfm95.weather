@@ -161,6 +161,18 @@ The anemometer cable plugs into the wind vane. The vane's RJ11 cable carries
 both sensors down to the electronics: the **inner pair** is the anemometer
 switch and the **outer pair** is the vane resistor.
 
+RJ11 pin numbering (clip facing away from you, pin 1 on the left):
+
+| Pin | Rain gauge RJ11 | Wind vane RJ11 (anemometer + vane) |
+|-----|------------------|-------------------------------------|
+| 1 (outer) | not used | Vane resistor, one leg |
+| 2 (inner) | Rain gauge reed switch | Anemometer reed switch |
+| 3 (inner) | Rain gauge reed switch | Anemometer reed switch |
+| 4 (outer) | not used | Vane resistor, other leg |
+
+Neither the reed switches nor the resistor element are polarized, so within
+each pair it doesn't matter which pin goes to which side.
+
 ### 🧭 Wind vane divider
 
 ```
