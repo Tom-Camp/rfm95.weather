@@ -173,6 +173,69 @@ RJ11 pin numbering (clip facing away from you, pin 1 on the left):
 Neither the reed switches nor the resistor element are polarized, so within
 each pair it doesn't matter which pin goes to which side.
 
+### Full breadboard layout
+
+All three circuits side by side, with RJ11 pins called out and a single
+shared GND:
+
+```
+                         3V3
+                          │
+                       [10 kΩ] R1
+                          │
+              ┌───────────●─────────── D6 (GPIO, rain)
+              │          node1
+         rain RJ11 pin 2
+              │
+            (reed)
+              │
+         rain RJ11 pin 3 ─────────────────────┐
+              │                                │
+          [0.1 µF] C1                          │
+              │                                │
+              └────────────────────────────────┤
+                                                 │
+                         D9                      │
+                          │                      │
+                       [10 kΩ] R2                │
+                          │                      │
+              ┌───────────●─────────── D5 (GPIO, anemometer)
+              │          node2                   │
+         vane RJ11 pin 2                         │
+              │                                  │
+            (reed)                               │
+              │                                  │
+         vane RJ11 pin 3 ─────────────────────────┤
+              │                                   │
+          [0.1 µF] C2                             │
+              │                                   │
+              └───────────────────────────────────┤
+                                                    │
+                         D10                        │
+                          │                          │
+                       [10 kΩ] R3                    │
+                          │                          │
+              ┌───────────●─────────── A0 (ADC, vane)
+              │          node3                       │
+         vane RJ11 pin 1                              │
+              │                                       │
+       (vane resistor)                                │
+              │                                       │
+         vane RJ11 pin 4 ───────────────────────────────┘
+                          │
+                         GND  (Feather's single GND pin)
+```
+
+| Signal     | Feather pin | Pull sources from | RJ11 pins used              | Cap?    |
+|------------|-------------|--------------------|------------------------------|---------|
+| Rain       | D6          | 3V3 (always on)    | rain jack, pins 2/3          | 0.1 µF  |
+| Anemometer | D5          | D9 (switched)       | vane jack, pins 2/3 (inner) | 0.1 µF  |
+| Vane       | A0          | D10 (switched)      | vane jack, pins 1/4 (outer) | none    |
+
+The anemometer and vane circuits terminate at the **same** RJ11 jack (the
+vane's cable) — double check pins 2/3 land on the anemometer's node and
+pins 1/4 land on the vane's node, not crossed.
+
 ### 🧭 Wind vane divider
 
 ```
