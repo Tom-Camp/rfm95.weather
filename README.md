@@ -4,7 +4,9 @@ A battery-powered weather station for the `yard.net` sensor network. It uses an
 [Adafruit Feather RP2040 RFM95](https://www.adafruit.com/product/5714) running
 CircuitPython, connected to a
 [SparkFun Weather Meter Kit (SEN-15901)](https://www.sparkfun.com/weather-meter-kit.html)
-(rain gauge, anemometer, and wind vane).
+(rain gauge, anemometer, and wind vane) and an
+[Adafruit Sensirion SHT41](https://www.adafruit.com/product/5776) temperature
+and humidity sensor on the STEMMA QT connector.
 
 > **Status:** design phase. The wiring and sleep strategy are worked out (see
 > [`notes.md`](notes.md) and [`wiring-diagram.pdf`](wiring-diagram.pdf)), but the
@@ -12,7 +14,9 @@ CircuitPython, connected to a
 
 ## 🛠️ How it works
 
-All three sensors are passive, so they draw no power while the Feather sleeps.
+The three weather meter sensors are passive, so they draw no power while the
+Feather sleeps. The SHT41 is an active I2C sensor: it stays connected to the
+STEMMA QT connector's supply and idles between readings.
 The station uses CircuitPython deep sleep
 (`alarm.exit_and_deep_sleep_until_alarms`) with two wake sources:
 
@@ -21,6 +25,7 @@ The station uses CircuitPython deep sleep
 | Rain gauge | Reed switch, one closure per bucket tip   | **PinAlarm**: each tip wakes the chip; stay awake and count tips until rain stops    | 0.2794 mm (0.011″) per tip     |
 | Anemometer | Reed switch, one closure per rotation     | **TimeAlarm**: wake on a schedule and count pulses for a 3–5 s window                | 1 closure/s = 1.492 mph        |
 | Wind vane  | Resistor ladder (16 positions, 8 reliable) | Read with the ADC during the same timed wake; only power the divider while reading | Lookup table of ADC values     |
+| SHT41      | I2C (address `0x44`), temperature and relative humidity | Single reading during the same timed wake                             | °F = °C × 9/5 + 32; humidity is already % RH |
 
 ### 💧 Rain
 
@@ -36,6 +41,12 @@ would trigger a full reboot. Instead the chip wakes on a timer, counts closures
 for a short window, and computes `mph = (pulses / window_s) × 1.492`. Gusts
 between samples are missed. How often the chip wakes for wind samples is the
 main factor in the power budget.
+
+### 🌡️ Temperature and humidity
+
+The SHT41 is read once per timed wake, alongside the wind sensors. It can't wake
+the chip. The library returns °C, so convert to °F before sending, as the other
+nodes do. Typical accuracy is ±0.2 °C and ±1.8 % RH.
 
 ### Persisting state
 
@@ -62,6 +73,7 @@ flowchart LR
         PD10["D10 · GP10<br/>vane divider power<br/>HIGH only while reading"]
         PA0["A0 · GP26<br/>ADC input"]
         PGND["GND"]
+        PQT["STEMMA QT<br/>3V3 · GND · SDA GP2 · SCL GP3"]
     end
 
     subgraph RAINRC["Rain debounce"]
@@ -93,6 +105,10 @@ flowchart LR
         RV["vane resistor · outer pair<br/>688 Ω – 120 kΩ by direction"]
     end
 
+    subgraph SHT["Adafruit SHT41 breakout"]
+        S1["temperature + humidity<br/>I2C 0x44"]
+    end
+
     GND[["Common GND"]]
 
     %% Rain: always-on pull-up so a tip can wake the chip
@@ -114,6 +130,9 @@ flowchart LR
 
     PGND --- GND
 
+    %% SHT41: one 4-wire STEMMA QT cable carries power, ground, and I2C
+    PQT ---|"STEMMA QT cable"| S1
+
     classDef pin fill:#ede9fe,stroke:#6d28d9,color:#1e1b4b
     classDef power fill:#fee2e2,stroke:#b91c1c,color:#450a0a
     classDef switched fill:#ffedd5,stroke:#c2410c,color:#431407
@@ -123,15 +142,16 @@ flowchart LR
     classDef ground fill:#1f2937,stroke:#111827,color:#f9fafb
 
     class PD6,PD5,PA0 pin
-    class P3V3 power
+    class P3V3,PQT power
     class PD9,PD10 switched
     class R1,R2,R3,C1,C2 part
     class N1,N2,N3 junction
-    class SW1,SW2,RV sensor
+    class SW1,SW2,RV,S1 sensor
     class GND,PGND ground
 ```
 
-Every `GND` line goes to the Feather's single GND pin. The diagram leaves out
+Every `GND` line goes to the Feather's single GND pin. The SHT41 gets its ground
+through the STEMMA QT cable. The diagram leaves out
 the optional parts described below (a 1 kΩ resistor between each reed and its
 cap, and a 1 kΩ static-protection resistor at each GPIO).
 
@@ -153,9 +173,11 @@ this board has no `GPx` names, so use `board.D6`, not `board.GP6`.
 | **D9**        | GP9         | 10 kΩ anemometer pull-up                                          | Driven HIGH only while sampling wind                     |
 | **A0**        | GP26        | Junction of the 10 kΩ series resistor and the wind vane           | ADC input                                                |
 | **D10**       | GP10        | 10 kΩ series resistor at the top of the vane divider              | Driven HIGH only while measuring                         |
+| **STEMMA QT** | GP2 (SDA), GP3 (SCL) | SHT41 breakout                                           | Same I2C bus as the SDA and SCL header pins              |
 
 These pins don't conflict with the onboard radio, which uses GP8 and
-GP14–GP23. Avoid D4 (NeoPixel), D7 (BOOT button), and D13 (red LED).
+GP14–GP23. Keep the SDA and SCL header pins free for I2C devices only, because
+they share a bus with the STEMMA QT connector. Avoid D4 (NeoPixel), D7 (BOOT button), and D13 (red LED).
 
 The anemometer cable plugs into the wind vane. The vane's RJ11 cable carries
 both sensors down to the electronics: the **inner pair** is the anemometer
@@ -175,7 +197,8 @@ each pair it doesn't matter which pin goes to which side.
 
 ### Full breadboard layout
 
-All three circuits side by side, with RJ11 pins called out and a single
+All three weather meter circuits side by side (the SHT41 plugs straight into
+the STEMMA QT connector and needs no breadboard wiring), with RJ11 pins called out and a single
 shared GND:
 
 ```
@@ -235,6 +258,40 @@ shared GND:
 The anemometer and vane circuits terminate at the **same** RJ11 jack (the
 vane's cable) — double check pins 2/3 land on the anemometer's node and
 pins 1/4 land on the vane's node, not crossed.
+
+### 🌡️ SHT41 (STEMMA QT)
+
+Connect the [SHT41 breakout (product 5776)](https://www.adafruit.com/product/5776)
+to the Feather with one STEMMA QT / Qwiic cable. No soldering or extra parts are
+needed: the breakout has its own 10 kΩ pull-ups on SDA and SCL.
+
+| STEMMA QT wire (usual color) | Feather    | SHT41 |
+|------------------------------|------------|-------|
+| Black                        | GND        | GND   |
+| Red                          | 3V3        | VIN   |
+| Blue                         | SDA (GP2)  | SDA   |
+| Yellow                       | SCL (GP3)  | SCL   |
+
+- **Address:** `0x44`, which can't be changed. Any other device on the bus needs
+  a different address.
+- **Bus:** `board.STEMMA_I2C()` and `board.I2C()` return the same bus on this
+  board.
+- **Library:** `adafruit_sht4x.mpy` in `lib/`. It needs
+  `adafruit_bus_device`, which is built into CircuitPython on this board.
+- **Reading:**
+  ```python
+  import board
+  import adafruit_sht4x
+
+  sht = adafruit_sht4x.SHT4x(board.STEMMA_I2C())
+  sht.mode = adafruit_sht4x.Mode.NOHEAT_HIGHPRECISION
+  temperature_c, humidity = sht.measurements
+  ```
+  Use a `NOHEAT` mode. The heater modes warm the sensor, so they skew the
+  reading and use more power.
+- **Placement:** put it outdoors in a ventilated radiation shield, out of direct
+  sun and rain. Keep it away from the Feather and battery, whose heat would raise
+  the reading.
 
 ### 🧭 Wind vane divider
 
@@ -340,6 +397,7 @@ uv sync
 ## References
 
 - [SparkFun Weather Meter hookup guide](https://learn.sparkfun.com/tutorials/weather-meter-hookup-guide)
+- [Adafruit: SHT40, SHT41 and SHT45 guide](https://learn.adafruit.com/adafruit-sht40-temperature-humidity-sensor)
 - [Adafruit: Deep Sleep with CircuitPython](https://learn.adafruit.com/deep-sleep-with-circuitpython)
 - [CircuitPython `alarm` module docs](https://docs.circuitpython.org/en/latest/shared-bindings/alarm/)
 

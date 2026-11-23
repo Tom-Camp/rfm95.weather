@@ -1,7 +1,9 @@
 import time
 
+import adafruit_sht4x
 import analogio
 import board
+import busio
 import digitalio
 
 import vane_lookup
@@ -75,12 +77,48 @@ def sample_anemometer(window_s=ANEMOMETER_WINDOW_S):
     return pulses, mph
 
 
+def _i2c():
+    # Feather: the STEMMA QT connector's bus. Dev boards like the Pico W have no
+    # STEMMA_I2C, so use the same GPIOs (SDA=GP2, SCL=GP3) there.
+    if hasattr(board, "STEMMA_I2C"):
+        return board.STEMMA_I2C()
+    return busio.I2C(scl=board.GP3, sda=board.GP2)
+
+
+def init_sht41():
+    # RuntimeError: no pull-ups on the bus. ValueError: no device at 0x44.
+    # OSError: I2C transfer failed.
+    try:
+        sht = adafruit_sht4x.SHT4x(_i2c())
+        sht.mode = adafruit_sht4x.Mode.NOHEAT_HIGHPRECISION
+    except (RuntimeError, ValueError, OSError) as e:
+        print("SHT41 not found: {}".format(e))
+        return None
+    return sht
+
+
+def celsius_to_fahrenheit(celsius):
+    return celsius * 9 / 5 + 32
+
+
+def read_sht41(sht):
+    # RuntimeError: bad CRC. OSError: I2C transfer failed.
+    try:
+        temp_c, humidity = sht.measurements
+    except (RuntimeError, OSError) as e:
+        print("SHT41 read failed: {}".format(e))
+        return None
+    return celsius_to_fahrenheit(temp_c), humidity
+
+
 def main():
     print("rfm95.weather wiring test -- Ctrl-C to stop")
 
     rain_pin = digitalio.DigitalInOut(RAIN_PIN)
     rain_pin.direction = digitalio.Direction.INPUT
     rain_pin.pull = None  # external pull-up (from 3V3) handles this
+
+    sht = init_sht41()
 
     rain_tips = 0
     rain_last_state = rain_pin.value
@@ -110,6 +148,9 @@ def main():
                     pulses, mph, direction, raw, voltage
                 )
             )
+            air = read_sht41(sht) if sht is not None else None
+            if air is not None:
+                print("air: {:.1f} F, {:.1f} % RH".format(*air))
             last_wind_sample = time.monotonic()
 
 
