@@ -1,0 +1,3 @@
+# Copy to settings.toml on the CIRCUITPY drive.
+# DEVICE_NUM must match DEVICE_{N}_DEVICE_ID / DEVICE_{N}_API_KEY in rfm95.gateway/.env
+DEVICE_NUM = 3

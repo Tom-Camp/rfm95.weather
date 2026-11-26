@@ -1,3 +1,4 @@
+import os
 import time
 
 import adafruit_sht4x
@@ -5,6 +6,7 @@ import analogio
 import board
 import busio
 import digitalio
+import keypad
 
 import vane_lookup
 
@@ -22,6 +24,7 @@ VANE_POWER_PIN = _pin("D10", "GP10")
 VANE_ADC_PIN = board.A0
 
 WIND_SAMPLE_INTERVAL_S = 5
+SEND_INTERVAL_S = 300
 ANEMOMETER_WINDOW_S = 3
 ANEMOMETER_MPH_PER_HZ = 1.492
 RAIN_MM_PER_TIP = 0.2794
@@ -111,34 +114,102 @@ def read_sht41(sht):
     return celsius_to_fahrenheit(temp_c), humidity
 
 
+def get_device_num():
+    value = os.getenv("DEVICE_NUM")
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def init_lora():
+    if not hasattr(board, "RFM_CS"):
+        print("no RFM95 radio on this board; not sending")
+        return None
+
+    device_num = get_device_num()
+    if device_num is None:
+        print("DEVICE_NUM missing or not an int in settings.toml; not sending")
+        return None
+
+    # Imported here so dev boards without the radio can still run this file.
+    from lib.lora_sender import LoraSender
+
+    try:
+        return LoraSender(device_num=device_num)
+    except (RuntimeError, ValueError, OSError) as e:
+        print("RFM95 not found: {}".format(e))
+        return None
+
+
+def init_battery():
+    # BatteryMonitor claims A3 and D13 on import; dev boards lack D13.
+    if not hasattr(board, "D13"):
+        return None
+    from lib.battery_monitor import BatteryMonitor
+
+    return BatteryMonitor()
+
+
+def build_data(mph, direction, rain_tips, air, voltage):
+    # These keys are the API contract: the gateway forwards them unchanged.
+    # A missing reading is sent as None so the keys stay the same.
+    temp_f, humidity = air if air is not None else (None, None)
+    return {
+        "wind_speed": mph,  # mph
+        "wind_dir": direction,  # N, NE, E, SE, S, SW, W, NW
+        "rain_tips": rain_tips,  # running count; resets to 0 on boot
+        "temp": temp_f,  # F
+        "humidity": humidity,  # % RH
+        "battery": voltage,  # V
+    }
+
+
+def init_rain():
+    # keypad scans in the background, so tips are still queued while the loop is
+    # blocked sampling wind or sending. It doesn't run during deep sleep.
+    return keypad.Keys(
+        (RAIN_PIN,),
+        value_when_pressed=False,
+        pull=False,  # external pull-up (from 3V3) handles this
+        interval=DEBOUNCE_S,
+    )
+
+
+def count_new_tips(rain):
+    tips = 0
+    event = rain.events.get()
+    while event:
+        if event.pressed:  # reed closed
+            tips += 1
+        event = rain.events.get()
+    return tips
+
+
 def main():
     print("rfm95.weather wiring test -- Ctrl-C to stop")
 
-    rain_pin = digitalio.DigitalInOut(RAIN_PIN)
-    rain_pin.direction = digitalio.Direction.INPUT
-    rain_pin.pull = None  # external pull-up (from 3V3) handles this
+    rain = init_rain()
 
     sht = init_sht41()
+    lora = init_lora()
+    battery = init_battery()
 
     rain_tips = 0
-    rain_last_state = rain_pin.value
-    rain_last_edge = time.monotonic()
     last_wind_sample = 0.0
+    last_send = None  # None: send right after the first sample
 
     while True:
         now = time.monotonic()
 
-        state = rain_pin.value
-        if state != rain_last_state and (now - rain_last_edge) > DEBOUNCE_S:
-            if state is False:
-                rain_tips += 1
-                print(
-                    "rain tip #{} ({:.2f} mm total)".format(
-                        rain_tips, rain_tips * RAIN_MM_PER_TIP
-                    )
+        new_tips = count_new_tips(rain)
+        if new_tips:
+            rain_tips += new_tips
+            print(
+                "rain tip #{} ({:.2f} mm total)".format(
+                    rain_tips, rain_tips * RAIN_MM_PER_TIP
                 )
-            rain_last_edge = now
-            rain_last_state = state
+            )
 
         if now - last_wind_sample >= WIND_SAMPLE_INTERVAL_S:
             pulses, mph = sample_anemometer()
@@ -151,6 +222,21 @@ def main():
             air = read_sht41(sht) if sht is not None else None
             if air is not None:
                 print("air: {:.1f} F, {:.1f} % RH".format(*air))
+
+            now = time.monotonic()
+            if lora is not None and (
+                last_send is None or now - last_send >= SEND_INTERVAL_S
+            ):
+                voltage = (
+                    battery.read_battery_voltage() if battery is not None else None
+                )
+                # Include tips queued during the wind sample.
+                rain_tips += count_new_tips(rain)
+                data = build_data(mph, direction, rain_tips, air, voltage)
+                # Blocks for several seconds if the gateway doesn't answer.
+                acked = lora.send_data(data)
+                print("LoRa {}: {}".format("ACKed" if acked else "not ACKed", data))
+                last_send = now
             last_wind_sample = time.monotonic()
 
 

@@ -198,3 +198,21 @@ wiring section is the current source of truth):
   Schmitt-trigger inputs enabled by default.
 - Optional: ~1 kΩ in series at each GPIO for static protection on long
   outdoor runs.
+
+## Update (2026-11-22): first firmware, LoRa, and power
+
+- **Rain counting uses `keypad`.** Polling D6 missed tips during the 3 s wind
+  sample (about 35% in simulation). `keypad` scans in the background but not during
+  deep sleep, so `PinAlarm` is still needed to wake. `countio` can't use D6, because
+  GP6 is a PWM A-channel pin.
+- **`LoraSender` was broadcasting.** The library never ACKs or retries broadcasts,
+  so `send_with_ack()` always returned `True`. This node's copy now sets `node` and
+  `destination`, starts from a random sequence number, and sleeps the radio after
+  sending. `nulayinn` and `rfm95.soil` still have the old copy.
+- **SHT41 added** on STEMMA QT (I2C 0x44).
+- **Rain is sent as a running count** so a lost packet doesn't lose rain.
+- **Power:** 3.7 V 2000 mAh battery, Voltaic P126 panel, and bq24074 linear charger.
+  By estimate, the always-awake firmware won't keep up in winter, so deep sleep is
+  the next step. See the README "Power" section.
+- **Not verified on hardware:** the LoRa, SHT41, and `keypad` code, and all power
+  figures.
